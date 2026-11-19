@@ -4,21 +4,24 @@
 [![rank](https://make.fun/badge/news-image-20261119/belski21-growl/makefun-news-image-20261119/rank.svg)](https://make.fun/bounty/news-image-20261119/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261119)
 [![reward](https://make.fun/badge/news-image-20261119/belski21-growl/makefun-news-image-20261119/reward.svg)](https://make.fun/bounty/news-image-20261119?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261119)
 
-# 19 November 2026 — The World in One Page
+# 19 November 2026 — The World in One Day (round 2)
 
-A broadsheet front page summing up Thursday 19 November 2026: **10 stories,
-4 photos, one page** — lead story Trump–Xi–Putin meeting in Shenzhen for the
-APEC summit, plus Jeffries nominated for Speaker, Anthropic's record $81.3bn
-IPO, Voyager 1 one light-day from Earth, and an "ALSO TODAY" band with the
-UN court's Rohingya verdict, GTA VI's global rollout, the EU's €45bn Ukraine
-loan, the Crimean Bridge attack, Spain's general strike and Cyclone Akvan.
-Every story was verified against a named news source before drawing (see
-build-log.md). The date is printed large in the masthead so the image names
-the day it sums up.
+A broadsheet front page summing up Thursday 19 November 2026: **40 stories,
+3 heroes, 12 drawn panels, a world map and a "Day in Numbers" strip, one
+page** — lead story Trump–Xi–Putin meeting in Shenzhen for the APEC summit,
+plus Anthropic's record $81.3bn IPO, Voyager 1 one light-day from Earth, and
+numbered briefs 1–40 grouped into 7 regions (Americas, Europe, Asia-Pacific,
+Middle East, Africa, Tech & Science, Culture & Sport): the ICJ's Rohingya
+genocide verdict, GTA VI's global launch, the EU's €45bn Ukraine loan, the
+Crimean Bridge attack, Spain's general strike, Cyclone Akvan, a record
+$190.4m Van Gogh sale, and 33 more. Every story was verified against a named
+news source before drawing (see build-log.md). The date is printed large in
+the masthead so the image names the day it sums up.
 
-The photos were generated for this entry and the page was composed with PIL
-(DejaVu Serif/Sans); all text is drawn by PIL, so no garbled AI text. The
-program itself only copies the finished image — deterministic across runs.
+All visuals are drawn programmatically with PIL (skylines, charts, starfields,
+a schematic world map, icons); all text is drawn by PIL (DejaVu Serif/Sans),
+so no garbled AI text and no external photographs. The program itself only
+copies the finished image — deterministic across runs.
 
 ## Run it
 
