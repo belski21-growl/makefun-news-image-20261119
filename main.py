@@ -1,139 +1,111 @@
-# SPDX-License-Identifier: MIT
-"""news-image-20261119 round 4 — deliver the fixed front page.
+#!/usr/bin/env python3
+"""news-r5 deliverer for the 19 November 2026 front page.
 
-The r4 broadsheet (giant date masthead, labelled leaders, coastline map,
-mini-scene panels, ALSO ON THURSDAY index) is pre-rendered as entry.png
-next to this file. This module only carries those exact bytes to the
-grader's output directory. Standard library only; no rendering, no network,
-and no image library is imported anywhere outside this docstring (the
-reference to PIL here is only to say it is NOT used).
+This script does NOT render anything and does NOT need Pillow or any
+third-party package: it only ships the pre-rendered entry.png that sits
+next to it, byte for byte, to the output directory.  The grader runs
+plain python:3.13, so everything here is standard library only.
 
-How this file differs from the r3 deliverer on purpose:
-  * no classes at all — plain functions over a small dict,
-  * JPEG segments are walked with ``int.from_bytes`` instead of ``struct``,
-  * the SOF search keeps the last-seen frame and reports every segment it
-    passes, and the copy step fsyncs before the read-back check.
+Safety checks before the copy is accepted:
+  * the source must exist and be a JPEG (SOI FFD8 at the front, EOI FFD9
+    at the back);
+  * the SOF0/SOF2 frame header must declare exactly 1024x1024;
+  * the file must be at most 1 MiB;
+  * after writing, the output is read back and its sha256 must match
+    the source, otherwise the run fails loudly instead of shipping a
+    truncated file.
+
+Output location: $MAKEFUN_OUTPUT_DIR when set, else ./output.
+The file is written to a temporary sibling first and then atomically
+renamed over the destination, so a failed run never leaves a partial
+entry.png behind.
 """
+
 import hashlib
 import os
 import sys
 from pathlib import Path
 
-SOURCE_NAME = "entry.png"
-FRAME_WANTED = (1024, 1024)
-BYTE_CAP = 1_048_576
-SOI = b"\xff\xd8"
-EOI = b"\xff\xd9"
-FRAME_CODES = frozenset(
-    [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
-     0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF]
-)
+ENTRY_NAME = "entry.png"
+EXPECTED_W = 1024
+EXPECTED_H = 1024
+MAX_BYTES = 1024 * 1024
 
 
-class BrokenPage(Exception):
-    """The source image failed a whole-file guard."""
+def fail(message):
+    print("news-r5: error: " + message, file=sys.stderr)
+    raise SystemExit(1)
 
 
 def read_source():
-    """Load entry.png from beside this file and run the byte-level guards."""
     here = Path(__file__).resolve().parent
-    path = here / SOURCE_NAME
-    if not path.is_file():
-        raise BrokenPage(f"{SOURCE_NAME} is missing next to main.py")
-    blob = path.read_bytes()
-    if len(blob) > BYTE_CAP:
-        raise BrokenPage(
-            f"{SOURCE_NAME} is {len(blob)} bytes, over the 1 MiB cap")
-    if not blob.startswith(SOI):
-        raise BrokenPage("not a JPEG: SOI marker missing at the start")
-    if not blob.endswith(EOI):
-        raise BrokenPage("not a complete JPEG: EOI marker missing at the end")
+    src = here / ENTRY_NAME
+    if not src.is_file():
+        fail("source not found next to this script: " + str(src))
+    blob = src.read_bytes()
+    if len(blob) > MAX_BYTES:
+        fail("source is %d bytes, over the 1 MiB limit" % len(blob))
+    if len(blob) < 4 or blob[0:2] != b"\xff\xd8" or blob[-2:] != b"\xff\xd9":
+        fail("source is not a JPEG (missing SOI/FFD8 or EOI/FFD9)")
     return blob
 
 
-def frame_dimensions(blob):
-    """Scan JPEG markers; return the (width, height) of the first frame."""
+def jpeg_size(blob):
+    """Find the first SOF0/SOF2 frame header and return (width, height).
+
+    Walks the marker stream by hand: every marker is 0xFF followed by a
+    marker byte and a 2-byte big-endian segment length (length includes
+    its own two bytes). Standalone markers (SOI, RSTn, TEM) carry no
+    length field and are skipped accordingly.
+    """
     pos = 2
-    seen = []
-    while pos + 4 <= len(blob):
+    end = len(blob)
+    standalone = {0xD8, 0xD9, 0x01} | set(range(0xD0, 0xD8))
+    while pos + 4 <= end:
         if blob[pos] != 0xFF:
-            raise BrokenPage(f"bad marker byte at offset {pos}")
-        code = blob[pos + 1]
-        seen.append(code)
-        if code == 0xD9:
-            break
-        if code == 0xD8 or 0xD0 <= code <= 0xD7:
+            fail("corrupt JPEG marker stream at offset %d" % pos)
+        marker = blob[pos + 1]
+        if marker in standalone:
             pos += 2
             continue
-        size = int.from_bytes(blob[pos + 2:pos + 4], "big")
-        if size < 2:
-            raise BrokenPage(f"segment at {pos} claims length {size}")
-        if code in FRAME_CODES:
-            if pos + 9 > len(blob):
-                raise BrokenPage("frame segment is truncated")
-            height = int.from_bytes(blob[pos + 5:pos + 7], "big")
-            width = int.from_bytes(blob[pos + 7:pos + 9], "big")
+        seg_len = (blob[pos + 2] << 8) | blob[pos + 3]
+        if seg_len < 2 or pos + 2 + seg_len > end:
+            fail("corrupt JPEG segment at offset %d" % pos)
+        if marker in (0xC0, 0xC1, 0xC2):
+            height = (blob[pos + 5] << 8) | blob[pos + 6]
+            width = (blob[pos + 7] << 8) | blob[pos + 8]
             return width, height
-        pos += 2 + size
-    raise BrokenPage(f"no frame segment found (markers seen: {seen})")
+        pos += 2 + seg_len
+    fail("no SOF frame header found in source JPEG")
 
 
-def describe(blob):
-    """Validate the payload and return its facts as a plain dict."""
-    dims = frame_dimensions(blob)
-    if dims != FRAME_WANTED:
-        raise BrokenPage(
-            f"frame is {dims[0]}x{dims[1]}, expected "
-            f"{FRAME_WANTED[0]}x{FRAME_WANTED[1]}")
-    return {
-        "bytes": len(blob),
-        "sha256": hashlib.sha256(blob).hexdigest(),
-        "width": dims[0],
-        "height": dims[1],
-    }
-
-
-def output_dir():
-    """Grader output dir from the environment, defaulting to /output."""
-    wanted = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
-    target = Path(wanted)
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise BrokenPage(f"cannot create output directory {target}: {exc}") from exc
-    return target
-
-
-def copy_out(blob, info):
-    """Write the payload byte-identically, fsync, then verify by read-back."""
-    dest = output_dir() / SOURCE_NAME
-    with open(dest, "wb") as handle:
+def deliver(blob):
+    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "output"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / ENTRY_NAME
+    tmp = out_dir / (ENTRY_NAME + ".tmp-r5")
+    with open(tmp, "wb") as handle:
         handle.write(blob)
         handle.flush()
         os.fsync(handle.fileno())
-    back = dest.read_bytes()
-    if back != blob:
-        raise BrokenPage("read-back bytes differ from the source after copy")
-    if hashlib.sha256(back).hexdigest() != info["sha256"]:
-        raise BrokenPage("read-back sha256 differs from the source after copy")
+    os.replace(tmp, dest)
+    echoed = dest.read_bytes()
+    if hashlib.sha256(echoed).hexdigest() != hashlib.sha256(blob).hexdigest():
+        fail("read-back mismatch: output is not byte-identical to source")
     return dest
 
 
-def run(argv=None):
-    try:
-        blob = read_source()
-        info = describe(blob)
-        dest = copy_out(blob, info)
-    except BrokenPage as exc:
-        print(f"news-r4: error: {exc}", file=sys.stderr)
-        return 1
-    print(
-        f"news-r4: wrote {dest} "
-        f"({info['width']}x{info['height']}, {info['bytes']} bytes, "
-        f"sha256 {info['sha256']})"
-    )
-    return 0
+def run():
+    blob = read_source()
+    width, height = jpeg_size(blob)
+    if (width, height) != (EXPECTED_W, EXPECTED_H):
+        fail("frame is %dx%d, expected %dx%d"
+             % (width, height, EXPECTED_W, EXPECTED_H))
+    dest = deliver(blob)
+    print("news-r5: wrote %s (%d bytes, %dx%d, sha256 %s)"
+          % (dest, len(blob), width, height,
+             hashlib.sha256(blob).hexdigest()))
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    run()
